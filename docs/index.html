@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<style>
+#graph {
+  position: fixed;
+  left: 0px;
+  right: 0px;
+  top: 0px;
+  bottom: 0px;
+}
+
+div.tooltip {
+  position: absolute;
+  background-color: white;
+  max-width; 200px;
+  height: auto;
+  padding: 1px;
+  border-style: solid;
+  border-radius: 4px;
+  border-width: 1px;
+  box-shadow: 3px 3px 10px rgba(0, 0, 0, .5);
+  pointer-events: none;
+}
+
+.link {
+  stroke-width: 2px;
+}
+
+.node circle {
+  stroke: #000;
+  stroke-width: 1px;
+}
+
+.node:hover circle {
+  fill: "green";
+}
+
+.cell {
+  fill: none;
+  pointer-events: all;
+}
+</style>
+<div id="graph"></div>
+<script src="https://d3js.org/d3.v5.min.js"></script>
+<script>
+  var circle_size_min = 2, circle_size_max = 50;
+  var line_width_min = 1, line_width_max = 30;
+
+  var graph_data_path = "graph.json";
+  var width = 960, height = 500
+
+  var graph_div = document.getElementById("graph");
+
+  var tooltip =
+    d3.select(graph_div)
+      .append("div")
+      .attr("class", "tooltip")
+      .style("opacity", 0);
+
+  var svg =
+    d3.select(graph_div)
+      .append("svg")
+      .attr("width", width)
+      .attr("height", height);
+
+  var simulation =
+    d3.forceSimulation()
+      .force("link", d3.forceLink().id(function(d) { return d.account_id; }))
+      .force("charge", d3.forceManyBody().strength(-150));
+
+  var voronoi =
+    d3.voronoi()
+      .x(function(d) { return d.x; })
+      .y(function(d) { return d.y; })
+      .extent([[0, 0], [width, height]]);
+
+  function redraw() {
+    var width = graph_div.clientWidth;
+    var height = graph_div.clientHeight;
+
+    voronoi =
+      d3.voronoi()
+        .x(function(d) { return d.x; })
+        .y(function(d) { return d.y; })
+        .extent([[0, 0], [width, height]]);
+
+    svg
+      .attr("width", width)
+      .attr("height", height);
+
+    simulation
+      .force("center", d3.forceCenter(width / 2, height / 2));
+  }
+
+  function circleSize(match_count, min_count, max_count, size_min, size_max) {
+    return size_min + (match_count - min_count) / (max_count - min_count) * (size_max - size_min);
+  }
+
+  function lineWidth(match_count, min_count, max_count, width_min, width_max) {
+    return width_min + (match_count - min_count) / (max_count - min_count) * (width_max - width_min);
+  }
+
+  function lineDistance(source, target, min_count, max_count, size_min, size_max) {
+    var source_circle_size =
+      circleSize(source.match_count, min_count, max_count, size_min, size_max);
+    var target_circle_size =
+      circleSize(target.match_count, min_count, max_count, size_min, size_max);
+
+    return (source_circle_size + target_circle_size) * 2;
+  }
+
+  function dragstarted(d) {
+    if (!d3.event.active) simulation.alphaTarget(0.3).restart();
+    d.fx = d.x;
+    d.fy = d.y;
+  }
+
+  function dragged(d) {
+    d.fx = d3.event.x;
+    d.fy = d3.event.y;
+  }
+
+  function dragended(d) {
+    if (!d3.event.active) simulation.alphaTarget(0);
+    d.fx = null;
+    d.fy = null;
+  }
+
+  function releasenode(d) {
+    d.fx = null;
+    d.fy = null;
+  }
+
+  d3.json(graph_data_path).then(function(data) {
+    var match_counts = data.nodes.map(node => node.match_count);
+    var match_count_min = Math.min(...match_counts);
+    var match_count_max = Math.max(...match_counts);
+
+    const linked = {};
+    data.links.forEach(d => {
+      linked[`${d.source},${d.target}`] = 1;
+    });
+
+    const link_color = {};
+    data.links.forEach(d => {
+      if (d.same_team_count > d.opposite_team_count) {
+        link_color[`${d.source},${d.target}`] = "green";
+      } else {
+        link_color[`${d.source},${d.target}`] = "red";
+      }
+    });
+
+    function link_connected(a, b) {
+      return linked[`${a.account_id},${b.account_id}`] || linked[`${b.account_id},${a.account_id}`] || a.account_id === b.account_id;
+    }
+
+    function connected_link_color(a, b) {
+      if (a.account_id == b.account_id) {
+        return "green";
+      }
+
+      return link_color[`${a.account_id},${b.account_id}`] || link_color[`${b.account_id},${a.account_id}`] || "#ccc";
+    }
+
+    function fade(node_opacity, link_opacity, node_highlight_opacity, link_highlight_opacity, use_color) {
+      return function(d) {
+        node.style('stroke-opacity', function(o) {
+          const is_connected = link_connected(d, o);
+          const this_opacity = is_connected ? node_highlight_opacity : node_opacity;
+          this.setAttribute('fill-opacity', this_opacity);
+          return this_opacity;
+        });
+
+        node.style('fill', function(o) {
+          if (use_color) {
+            return connected_link_color(d, o);
+          }
+
+          return "#ccc";
+        });
+
+        link.style('stroke-opacity', function(o) {
+          if (o.source === d || o.target === d) {
+            return link_highlight_opacity;
+          }
+
+          return link_opacity;
+        });
+
+        link.style('stroke', function(o) {
+          if (use_color) {
+            if (o.source === d) {
+              return connected_link_color(d, o.target);
+            } else if (o.target === d) {
+              return connected_link_color(d, o.source);
+            }
+          }
+
+          return "#ccc";
+        });
+      };
+    }
+
+    simulation
+      .force('collision',
+        d3.forceCollide().radius(function(d) {
+          return circleSize(
+            d.match_count,
+            match_count_min,
+            match_count_max,
+            circle_size_min,
+            circle_size_max
+          );
+        })
+      );
+
+    simulation
+      .nodes(data.nodes)
+      .force("link")
+      .links(data.links);
+
+    var link =
+      svg.selectAll(".link")
+         .data(data.links)
+         .enter()
+         .append("line")
+         .attr("class", "link")
+         .style('stroke-opacity', 0.3)
+         .style('stroke', "#ccc")
+         .on('mouseover.tooltip', function(d) {
+           tooltip
+             .transition()
+             .duration(300)
+             .style("opacity", .8);
+           tooltip
+             .html(
+               "<table>" +
+               "<tr>" +
+               "<td><b>Player 1:</b></td>" +
+               "<td>" + d.source.name + "</td>" +
+               "</tr>" +
+               "<tr>" +
+               "<td><b>Player 2:</b></td>" +
+               "<td>" + d.target.name + "</td>" +
+               "</tr>" +
+               "<tr>" +
+               "<td><b>Matches in same team:</b></td>" +
+               "<td>" + d.same_team_count + "</td>" +
+               "</tr>" +
+               "<tr>" +
+               "<td><b>Matches in opposite team:</b></td>" +
+               "<td>" + d.opposite_team_count + "</td>" +
+               "</tr>" +
+               "</table>"
+               )
+             .style("left", (d3.event.pageX) + "px")
+             .style("top", (d3.event.pageY + 10) + "px");
+         })
+         .on("mouseout.tooltip", function() {
+           tooltip
+             .transition()
+             .duration(100)
+             .style("opacity", 0);
+         })
+         .on('mouseout.fade', fade(1, 0.3, 1, 0.6, false))
+         .on("mousemove", function() {
+           tooltip
+             .style("left", (d3.event.pageX) + "px")
+             .style("top", (d3.event.pageY + 10) + "px");
+         });
+
+    var node =
+      svg.selectAll(".node")
+         .data(data.nodes)
+         .enter()
+         .append("g")
+         .attr("class", "node")
+         .style('fill', "#ccc");
+
+    var circle =
+      node.append("circle")
+          .attr("r", function(d) {
+            return circleSize(
+              d.match_count,
+              match_count_min,
+              match_count_max,
+              circle_size_min,
+              circle_size_max
+            );
+          })
+          .on('mouseover.tooltip', function(d) {
+              tooltip.transition()
+                .duration(300)
+                .style("opacity", .8);
+              tooltip
+              .html(
+                "<table>" +
+                "<tr>" +
+                "<td><b>" + d.name + "</b></td>" +
+                "<td></td>" +
+                "</tr>" +
+                "<tr>" +
+                "<td></td>" +
+                "<td></td>" +
+                "</tr>" +
+                "<tr>" +
+                "<td><b>Matches:</b></td>" +
+                "<td></td>" +
+                "</tr>" +
+                "<tr>" +
+                "<td><b>Normal skill:</b></td>" +
+                "<td>" + d.normal_skill_count + "</td>" +
+                "</tr>" +
+                "<tr>" +
+                "<td><b>High skill:</b></td>" +
+                "<td>" + d.high_skill_count + "</td>" +
+                "</tr>" +
+                "<tr>" +
+                "<td><b>Very high skill:</b></td>" +
+                "<td>" + d.very_high_skill_count + "</td>" +
+                "</tr>" +
+                "<tr>" +
+                "<td><b>Unknown skill:</b></td>" +
+                "<td>" + d.unknown_skill_count + "</td>" +
+                "</tr>" +
+                "<tr>" +
+                "<td><b>Total:</b></td>" +
+                "<td>" + d.match_count + "</td>" +
+                "</tr>" +
+                "</table>"
+                )
+                .style("left", (d3.event.pageX) + "px")
+                .style("top", (d3.event.pageY + 10) + "px");
+            })
+          .on('mouseover.fade', fade(0.1, 0.1, 1, 0.6, true))
+          .on("mouseout.tooltip", function() {
+              tooltip.transition()
+                .duration(100)
+                .style("opacity", 0);
+            })
+          .on('mouseout.fade', fade(1, 0.3, 1, 0.6, false))
+            .on("mousemove", function() {
+              tooltip.style("left", (d3.event.pageX) + "px")
+                .style("top", (d3.event.pageY + 10) + "px");
+            })
+          .on('dblclick',releasenode)
+          .call(
+            d3.drag()
+              .on("start", dragstarted)
+              .on("drag", dragged)
+              .on("end", dragended)
+          );
+
+    var cell =
+      node.append("path")
+          .attr("class", "cell");
+
+    simulation.on("tick", function() {
+      cell
+        .data(voronoi(data.nodes))
+        .attr("d", function(d) { return d.length ? "M" + d.join("L") : null; });
+
+      link
+        .attr("x1", function(d) { return d.source.x; })
+        .attr("y1", function(d) { return d.source.y; })
+        .attr("x2", function(d) { return d.target.x; })
+        .attr("y2", function(d) { return d.target.y; });
+
+      circle
+        .attr("cx", function(d) { return d.x; })
+        .attr("cy", function(d) { return d.y; });
+    });
+
+    redraw();
+    window.addEventListener("resize", redraw);
+  });
+</script>

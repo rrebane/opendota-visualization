@@ -1,0 +1,10 @@
+__pycache__/
+*.pybak
+*.py[cod]
+*$py.class
+
+cache
+env
+opendota-crawler/api_key.py
+opendota-python
+request-counter.txt
